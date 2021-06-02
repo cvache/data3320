@@ -1,0 +1,152 @@
+---
+title: "Officer Information Graphs"
+author: "Matt Ielusic"
+date: "5/28/2021"
+output: html_document
+---
+
+```{r}
+library(tidyverse)
+library(readr)
+library(lubridate)
+library(skimr)
+```
+
+```{r}
+#force_data <- read.csv("https://data.seattle.gov/resource/ppi5-g2bj.csv")
+# The columns are, in order:
+# ID: GUID - should be char
+# Incident_Num - Morally should also be a 'chr' factor, not 'int'.  I'm not quite sure what the interpretation of this column is yet!  These values are not unique!!
+# Incident_Type - should be a factor
+# Occured_date_time - should be a datetime, no doy
+# Precinct/Sector/Beat: How SPD organizes Seattle spatially.  Should be factors.
+# Officer_ID/Subject_ID: I assume these are anonymized unique identifiers for officers and Seattle residents.  Out of 12,955 rows, there are 1,257 unique officer IDs and 6,888 unique resident IDs.  They can stay as 'int' for now, but morally should be 'chr'.
+# Subject_Race/Subject_Gender: Replace Not Specified with NA, make factor.
+
+force.data <- read.csv("Use_Of_Force.csv")
+force.data <- force.data %>%
+  mutate(Incident_Type = as.factor(Incident_Type)) %>%
+  mutate(Occured_date_time = parse_datetime(Occured_date_time, format="%m/%d/%Y %I:%M:%S %p", locale=)) %>%
+  mutate(Precinct = as.factor(Precinct)) %>%
+  mutate(Sector = as.factor(Sector)) %>%
+  mutate(Beat = as.factor(Beat)) %>%
+  mutate(Subject_Race = as.factor(Subject_Race)) %>%
+  mutate(Subject_Gender = as.factor(Subject_Gender)) 
+
+skim_without_charts(force.data)
+```
+As presented this table is on not unique, because the "location" variable is spread across three columns.
+
+```{r}
+force.data %>% 
+  count(Incident_Num) %>%
+  filter(n > 1) %>%
+  arrange(desc(n))
+
+# TODO: Extract incidents w/ the same Incident_Num automatically
+```
+
+
+```{r}
+incident_to_examine <- 581
+force.data %>% filter(Incident_Num == incident_to_examine)
+```
+
+We see that there are four rows.  Among the variables:
+* ID is unique
+* Incident_Type is identical --- but I don't think this is necessarily the case
+* Occured_date_time is identical
+* The location is identical
+* **Officer_ID is identical!**
+* Subject_ID is unique
+* Subject_Race is identical, but this appears to be a coincidence
+* Subject_Gender is differs
+
+```{r}
+incident_to_examine <- 14888
+force.data %>% filter(Incident_Num == incident_to_examine)
+```
+
+Alright, now we're getting somewhere.  `Officer_ID` is the same across all rows, as is the location and date-time, and the subjects are a spread of races and genders.  Interestingly, se see consecutive values from 12071 to 12075, the consecutive values 12067/12068, and values in the low thousands (4645/8841).  This is a hint that Subject_ID is not assigned randomly - it is assigned in a certain order...
+
+In principle, a use-of-force incident can involve any number of officers and any number of subjects.  (Imagine, for example, a riot.)  It looks like Incident_Num has a unique value each time a single officer has an "incident" with one or more  subjects.
+
+
+```{r}
+incident_to_examine <- 57301
+force.data %>% filter(Incident_Num == incident_to_examine)
+```
+
+```{r}
+incident_to_examine <- 56558
+force.data %>% filter(Incident_Num == incident_to_examine)
+```
+```{r}
+force.data %>%
+  group_by(Officer_ID) %>%
+  summarize(n = n()) %>%
+  ggplot(mapping = aes(x = n)) +
+  geom_histogram(binwidth=2) +
+  labs(title="Histogram of Total Number of Subjects Force Was Used On by Officer", y = "Count", x = "Officer's Number of Incidents") +
+  theme_bw()
+```
+
+```{r}
+force.data %>%
+  group_by(Officer_ID, Incident_Num) %>%
+  count() # Each row is (officer ID, incident number, number of subjects involved in incidents)
+```
+
+```{r}
+officer_summary <- force.data %>%
+  group_by(Officer_ID, Incident_Num) %>%
+  count() %>%
+  group_by(Officer_ID) %>%
+  summarize(total_subjects = sum(n), 
+            total_incidents = length(unique(Incident_Num)), 
+            mean_subjects_per_incident = mean(n)) 
+```
+
+```{r}
+officer_summary %>%
+  ggplot(aes(x = total_subjects)) + 
+  geom_histogram(binwidth=2)
+```
+```{r}
+officer_summary %>%
+  ggplot(aes(x = total_incidents)) + 
+  geom_histogram(binwidth=2)
+```
+
+```{r}
+officer_summary %>%
+  ggplot(aes(x = total_incidents, y = total_subjects)) + 
+  geom_point()
+```
+
+```{r}
+officer_summary %>%
+  ggplot(aes(x = mean_subjects_per_incident, y = total_subjects)) + 
+  geom_point() +
+  labs(title="Use of Force is Driven By Many Small Incidents, Not By Large Incidents", x="Mean Number of Subjects in Incident Per Officer", y="Total Number of Subjects in per Officer") +
+  theme_bw()
+```
+
+```{r}
+force.data %>%
+  group_by(Officer_ID, Incident_Type) %>%
+  count()
+```
+
+```{r}
+levels_summary <- force.data %>%
+  group_by(Officer_ID, Incident_Type) %>%
+  count %>%
+  pivot_wider(id_cols=Officer_ID,
+              names_from=c(Incident_Type),
+              values_from=c(n),
+              values_fill=0)
+
+levels_summary
+```
+
